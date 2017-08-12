@@ -25,7 +25,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 include(opentrack-check-build-directory)
 include(opentrack-mrproper)
 
-project(opentrack)
+project(opentrack-trackhat)
 cmake_minimum_required(VERSION 2.8.11)
 include(opentrack-policy NO_POLICY_SCOPE)
 

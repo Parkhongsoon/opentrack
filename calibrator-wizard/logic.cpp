@@ -1,49 +1,41 @@
 #include "logic.hpp"
 
 using namespace calibrator_wizard;
+using namespace calibrator_wizard::detail;
 
-constexpr tuple Wizard::actions[];
+constexpr tuple wizard_base::actions[];
 
-tuple Wizard::pose_diff(const tuple& pose) const
+tuple wizard_base::pose_diff() const
 {
     if (is_done())
         return tuple(y_nada, p_nada);
 
-    yaw_action ret_y = y_nada, pose_y, cur_yaw;
-    pitch_action ret_p = p_nada, pose_p, cur_pitch;
+    yaw_action cur_y, exp_yaw, ret_y = y_nada;
+    pitch_action cur_p, exp_pitch, ret_p = p_nada;
 
-    std::tie(pose_y, pose_p) = pose;
-    std::tie(cur_yaw, cur_pitch) = expected();
+    std::tie(cur_y, cur_p) = cur_pose();
+    std::tie(exp_yaw, exp_pitch) = expected();
 
-    if (cur_yaw != pose_y)
-        ret_y = pose_y;
+    if (exp_yaw != cur_y)
+        ret_y = cur_y;
 
-    if (cur_pitch != pose_p)
-        ret_p = pose_p;
+    if (exp_pitch != cur_p)
+        ret_p = cur_p;
 
     return tuple(ret_y, ret_p);
 }
 
-bool Wizard::maybe_next(const pose_t& pose)
+bool wizard_base::maybe_next()
 {
     if (is_done())
         return false;
 
+    get_pose(euler, R, T);
+
     tuple expected_ = expected();
-    tuple current_ = cur_pose(pose);
+    tuple current_ = cur_pose();
 
     const bool ret = current_ == expected_;
-
-    static constexpr double d2r = M_PI/180;
-
-    rmat R_ = euler::euler_to_rmat(d2r * euler_angles_t(&pose[Yaw]));
-    cv::Matx33d R;
-
-    for (unsigned i = 0; i < 3; i++)
-        for (unsigned j = 0; j < 3; j++)
-            R(i, j) = R_(i, j);
-
-    cv::Vec3d T(pose[TX], pose[TY], pose[TZ]);
 
     calibrator.update(R, T);
 
@@ -61,18 +53,15 @@ bool Wizard::maybe_next(const pose_t& pose)
         bool yaw_reached, pitch_reached;
         std::tie(yaw_reached, pitch_reached) = reached_p;
 
-        if (expected_y != current_y)
-            yaw_reached = false;
-        if (expected_p != current_p)
-            pitch_reached = false;
-
+        yaw_reached = expected_y == current_y;
+        pitch_reached = expected_p == current_p;
         reached_p = bb(yaw_reached, pitch_reached);
     }
 
     return ret;
 }
 
-bool Wizard::is_done() const
+bool wizard_base::is_done() const
 {
     if (iter == std::end(actions))
         return false;
@@ -93,7 +82,7 @@ static constexpr int pitch_down_sustain = -6;
 static constexpr int yaw_side_start = 18;
 static constexpr int yaw_side_sustain = 10;
 
-tuple Wizard::expected() const
+tuple wizard_base::expected() const
 {
     if (iter == std::end(actions))
         return tuple(y_nada, p_nada);
@@ -101,7 +90,17 @@ tuple Wizard::expected() const
     return *iter;
 }
 
-tuple Wizard::cur_pose(const pose_t& pose) const
+TranslationCalibrator wizard_base::make_from_calib_order()
+{
+    calibrator_order order = get_calibrator_order();
+
+    int y, p, r;
+    std::tie(y, p, r) = order;
+
+    return TranslationCalibrator(y, p, r);
+}
+
+tuple wizard_base::cur_pose() const
 {
     yaw_action ret_y = y_center;
     pitch_action ret_p = p_center;
@@ -122,29 +121,55 @@ tuple Wizard::cur_pose(const pose_t& pose) const
         yaw_side = yaw_side_start;
 
     // left is minus, right is plus
-    if (pose(Yaw) > yaw_side)
+    if (euler(Yaw) > yaw_side)
         ret_y = y_right;
-    else if (pose(Yaw) < -yaw_side)
+    else if (euler(Yaw) < -yaw_side)
         ret_y = y_left;
 
     // up is plus, down is minus
-    if (pose(Pitch) > pitch_up)
+    if (euler(Pitch) > pitch_up)
         ret_p = p_up;
-    else if (pose(Pitch) < pitch_down)
+    else if (euler(Pitch) < pitch_down)
         ret_p = p_down;
 
     return tuple(ret_y, ret_p);
 }
 
-QString Wizard::action_to_string(const tuple& pose)
+QString wizard_base::action_to_string()
 {
     return QString();
 }
 
-Wizard::Wizard(QObject* parent) :
-    QObject(parent),
-    calibrator(1, 2, 0),
+wizard_base::wizard_base() :
+    calibrator(make_from_calib_order()), // no std::apply in c++14
     iter(std::begin(actions)),
     reached_p(false, false)
+{
+    R = cv::Matx33d::eye();
+    T = cv::Vec3d(0, 0, 0);
+    euler = pose_t();
+}
+
+wizard_base::~wizard_base()
+{
+}
+
+// template version
+
+template<typename tracker_type>
+void wizard<tracker_type>::get_pose(pose_t& euler, cv::Matx33d& R, cv::Vec3d& T) const
+{
+    return traits::get_pose(euler, R, T);
+}
+
+template<typename tracker_type>
+calibrator_order wizard<tracker_type>::get_calibrator_order() const
+{
+    return traits::get_calibrator_order();
+}
+
+template<typename tracker_type>
+wizard<tracker_type>::wizard(std::shared_ptr<const tracker_type> tracker)
+    : tracker(tracker)
 {
 }

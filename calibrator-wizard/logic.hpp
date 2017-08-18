@@ -8,8 +8,6 @@
 #include <tuple>
 #include <iterator>
 
-#include <QObject>
-
 namespace calibrator_wizard {
 
 template<int j, int k> using mat = Mat<double, j, k>;
@@ -29,11 +27,31 @@ enum pitch_action {
 };
 
 using tuple = std::tuple<yaw_action, pitch_action>;
+using calibrator_order = std::tuple<int, int, int>;
 
-class Wizard final : QObject
+template<typename tracker_type, typename = void>
+struct tracker_traits
 {
-    Q_OBJECT
+    static inline calibrator_order get_calibrator_order()
+    {
+        return std::make_tuple(0, 1, 2);
+    }
 
+    static inline void get_pose(pose_t& euler, cv::Matx33d& R, cv::Vec3d& T)
+    {
+        euler = pose_t(0, 0, 0, 0, 0, 0);
+        R = cv::Matx33d::eye();
+        T = cv::Vec3d::zeros();
+    }
+
+    static_assert(!std::is_same_v<tracker_type, tracker_type>,
+                  "specialize for given tracker type");
+};
+
+namespace detail {
+
+class wizard_base
+{
     TranslationCalibrator calibrator;
 
     static constexpr tuple actions[] =
@@ -69,15 +87,41 @@ class Wizard final : QObject
 
     tuple expected() const;
 
+    cv::Matx33d R;
+    cv::Vec3d T;
+    pose_t euler;
+
+    TranslationCalibrator make_from_calib_order();
+
+protected:
+    virtual void get_pose(pose_t& euler, cv::Matx33d& R, cv::Vec3d& T) const = 0;
+    virtual calibrator_order get_calibrator_order() const = 0;
+    bool maybe_next();
+
 public:
-    tuple cur_pose(const pose_t& pose) const;
-    tuple pose_diff(const tuple& pose) const;
-    bool maybe_next(const pose_t& pose);
+    tuple cur_pose() const;
+    tuple pose_diff() const;
     bool is_done() const;
 
-    static QString action_to_string(const tuple& pose);
+    static QString action_to_string();
 
-    Wizard(QObject* = nullptr);
+    wizard_base();
+    virtual ~wizard_base();
+};
+
+} // ns calibrator_wizard::detail
+
+template<typename tracker_type>
+class wizard final : public wizard_base
+{
+    using traits = tracker_traits<tracker_type>;
+
+    std::shared_ptr<const tracker_type> tracker;
+
+    void get_pose(pose_t& euler, cv::Matx33d& R, cv::Vec3d& T) const override;
+    calibrator_order get_calibrator_order() const override;
+public:
+    wizard(std::shared_ptr<const tracker_type> tracker);
 };
 
 } // ns calibrator_wizard
